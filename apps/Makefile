@@ -43,6 +43,7 @@ APPS := about \
   useradmin \
   impala \
   pig \
+  sqoop \
   search
 
 ################################################
@@ -115,6 +116,7 @@ I18N_APPS := about \
   oozie \
   impala \
   pig \
+  sqoop \
   search
 
 COMPILE_LOCALE_TARGETS := $(I18N_APPS:%=.recursive-compile-locales/%)

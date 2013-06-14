@@ -18,60 +18,22 @@ try:
   import json
 except ImportError:
   import simplejson as json
-import logging
-import posixpath
 
-LOG = logging.getLogger(__name__)
+from django.utils.translation import ugettext as _
+
+from desktop.lib.rest.resource import Resource
 
 
-class Resource(object):
+class SqoopResource(Resource):
   """
-  Encapsulates a resource, and provides actions to invoke on it.
+  Sqoop resources provide extra response headers.
+  @see desktop.lib.rest.resource
   """
-  def __init__(self, client, relpath=""):
-    """
-    @param client: A Client object.
-    @param relpath: The relative path of the resource.
-    """
-    self._client = client
-    self._path = relpath.strip('/')
-
-  @property
-  def base_url(self):
-    return self._client.base_url
-
-  def _join_uri(self, relpath):
-    if relpath is None:
-      return self._path
-    return self._path + posixpath.normpath('/' + relpath)
-
-  def _get_body(self, resp):
-    try:
-      body = resp.read()
-    except Exception, ex:
-      raise Exception("Command '%s %s' failed: %s" %
-                      (method, path, ex))
-    return body
-
-  def _format_body(self, resp, body):
-    """
-    Decide whether the body should be a json dict or string
-    """
-    if len(body) != 0 and \
-          resp.info().getmaintype() == "application" and \
-          resp.info().getsubtype() == "json":
-      try:
-        json_dict = json.loads(body)
-        return json_dict
-      except Exception, ex:
-        self._client.logger.exception('JSON decode error: %s' % (body,))
-        raise ex
-    else:
-      return body
 
   def invoke(self, method, relpath=None, params=None, data=None, headers=None):
     """
     Invoke an API method.
+    Look for sqoop-error-code and sqoop-error-message.
     @return: Raw body or JSON dictionary (if response content type is JSON).
     """
     path = self._join_uri(relpath)
@@ -82,25 +44,24 @@ class Resource(object):
                                 headers=headers)
     body = self._get_body(resp)
 
-    self._client.logger.debug(
-        "%s Got response: %s%s" %
-        (method, body[:32], len(body) > 32 and "..." or ""))
+    if resp.getcode() == 200:
+      self._client.logger.debug(
+          "%(method)s Got response:\n%(headers)s\n%(body)s" % {
+            'method': method,
+            'headers': resp.headers,
+            'body': body
+      })
+      # Sqoop always uses json
+      return self._format_body(resp, body)
+    else:
+      # Body will probably be a JSON formatted stacktrace
+      body = self._format_body(resp, body)
+      msg_format = "%(method)s Sqoop Error (%s): %s\n\t%s"
+      args = (resp.headers['sqoop-error-code'], resp.headers['sqoop-error-message'], body)
+      self._client.logger.error(msg_format % args)
+      raise IOError(_(msg_format) % args)
 
-    return self._format_body(resp, body)
-
-
-  def get(self, relpath=None, params=None, headers=None):
-    """
-    Invoke the GET method on a resource.
-    @param relpath: Optional. A relative path to this resource's path.
-    @param params: Key-value data.
-
-    @return: A dictionary of the JSON result.
-    """
-    return self.invoke("GET", relpath, params, headers=headers)
-
-
-  def delete(self, relpath=None, params=None):
+  def delete(self, relpath=None, params=None, headers=None):
     """
     Invoke the DELETE method on a resource.
     @param relpath: Optional. A relative path to this resource's path.
@@ -108,10 +69,10 @@ class Resource(object):
 
     @return: A dictionary of the JSON result.
     """
-    return self.invoke("DELETE", relpath, params)
+    return self.invoke("DELETE", relpath, params, None, headers)
 
 
-  def post(self, relpath=None, params=None, data=None, contenttype=None):
+  def post(self, relpath=None, params=None, data=None, headers=None):
     """
     Invoke the POST method on a resource.
     @param relpath: Optional. A relative path to this resource's path.
@@ -121,11 +82,10 @@ class Resource(object):
 
     @return: A dictionary of the JSON result.
     """
-    return self.invoke("POST", relpath, params, data,
-                       self._make_headers(contenttype))
+    return self.invoke("POST", relpath, params, data, headers)
 
 
-  def put(self, relpath=None, params=None, data=None, contenttype=None):
+  def put(self, relpath=None, params=None, data=None, headers=None):
     """
     Invoke the PUT method on a resource.
     @param relpath: Optional. A relative path to this resource's path.
@@ -135,8 +95,7 @@ class Resource(object):
 
     @return: A dictionary of the JSON result.
     """
-    return self.invoke("PUT", relpath, params, data,
-                       self._make_headers(contenttype))
+    return self.invoke("PUT", relpath, params, data, headers)
 
 
   def _make_headers(self, contenttype=None):
